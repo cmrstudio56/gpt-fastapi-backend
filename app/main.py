@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import os, json
 from io import BytesIO
 import re
+import requests
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -17,6 +18,19 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # ISA_BRAIN folder ID
 DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"
+
+# OpenRouter config
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_BASE_URL = "https://openrouter.io/api/v1"
+# Popular models available on OpenRouter
+AVAILABLE_MODELS = {
+    "claude-3-5-sonnet": "anthropic/claude-3.5-sonnet",
+    "claude-3-opus": "anthropic/claude-3-opus",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt-4-turbo": "openai/gpt-4-turbo",
+    "llama-2": "meta-llama/llama-2-70b-chat",
+    "mistral": "mistralai/mistral-7b-instruct"
+}
 
 # ======================================================
 # GOOGLE DRIVE AUTH
@@ -74,8 +88,8 @@ except Exception as e:
 
 app = FastAPI(
     title="GPT Writer API",
-    description="Backend for Custom GPT Actions",
-    version="3.4.0",
+    description="Backend for Custom GPT Actions with OpenRouter AI Integration",
+    version="3.5.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -108,6 +122,7 @@ class SummarizeRequest(BaseModel):
     title: str
     project: str = "default"
     max_length: int = 300  # Characters in summary
+    model: str = "claude-3-5-sonnet"  # AI model to use (optional, falls back to simple summarization)
 
 # ======================================================
 # HELPERS
@@ -305,6 +320,56 @@ def simple_summarize(text: str, max_length: int = 300) -> str:
         return text[:max_length] + "..." if len(text) > max_length else text
 
 
+def openrouter_summarize(text: str, model: str = "claude-3-5-sonnet", max_length: int = 300) -> str:
+    """
+    Use OpenRouter to summarize text with AI models
+    Models available: claude-3-5-sonnet, claude-3-opus, gpt-4o, gpt-4-turbo, llama-2, mistral
+    """
+    if not OPENROUTER_API_KEY:
+        print("OpenRouter API key not configured, falling back to simple summarization")
+        return simple_summarize(text, max_length)
+    
+    try:
+        model_id = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["claude-3-5-sonnet"])
+        
+        prompt = f"""Summarize the following text in approximately {max_length} characters. 
+Be concise and capture the main points.
+
+TEXT:
+{text}
+
+SUMMARY:"""
+        
+        response = requests.post(
+            f"{OPENROUTER_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": "https://railway.app",
+                "X-Title": "FastAPI GPT Writer"
+            },
+            json={
+                "model": model_id,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 500,
+                "temperature": 0.7
+            }
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            summary = result["choices"][0]["message"]["content"].strip()
+            return summary[:max_length] + "..." if len(summary) > max_length else summary
+        else:
+            print(f"OpenRouter error: {response.status_code} - {response.text}")
+            return simple_summarize(text, max_length)
+    
+    except Exception as e:
+        print(f"Error with OpenRouter summarization: {str(e)}")
+        return simple_summarize(text, max_length)
+
+
 def get_book_metadata_file(book_title: str, project: str = "default") -> dict:
     """Get metadata for a book (stored as JSON in a special file)"""
     if not drive:
@@ -485,7 +550,7 @@ def append_text(req: WriteRequest):
 
 @app.post("/summarize")
 def summarize_file(req: SummarizeRequest):
-    """Read and summarize an existing file"""
+    """Read and summarize an existing file using OpenRouter AI or simple extraction"""
     if not drive:
         return {
             "status": "error",
@@ -502,13 +567,22 @@ def summarize_file(req: SummarizeRequest):
             }
         
         content = read_file_from_drive(file["id"])
-        summary = simple_summarize(content, req.max_length)
+        
+        # Use OpenRouter if available, otherwise fall back to simple summarization
+        if req.model and OPENROUTER_API_KEY:
+            summary = openrouter_summarize(content, req.model, req.max_length)
+            method = "OpenRouter AI"
+        else:
+            summary = simple_summarize(content, req.max_length)
+            method = "Extractive"
         
         return {
             "status": "success",
             "title": req.title,
             "content_length": len(content),
             "summary": summary,
+            "method": method,
+            "model": req.model if OPENROUTER_API_KEY else "N/A",
             "project": req.project
         }
     except Exception as e:
@@ -516,6 +590,24 @@ def summarize_file(req: SummarizeRequest):
             "status": "error",
             "message": f"Failed to summarize file: {str(e)}"
         }
+
+
+@app.get("/models")
+def list_available_models():
+    """List all available AI models from OpenRouter"""
+    return {
+        "status": "success",
+        "models_available": list(AVAILABLE_MODELS.keys()),
+        "openrouter_configured": bool(OPENROUTER_API_KEY),
+        "model_details": {
+            "claude-3-5-sonnet": "Latest Claude 3.5 Sonnet - Best for summarization",
+            "claude-3-opus": "Claude 3 Opus - More powerful reasoning",
+            "gpt-4o": "OpenAI GPT-4o - Multimodal capabilities",
+            "gpt-4-turbo": "GPT-4 Turbo - Fast processing",
+            "llama-2": "Meta Llama 2 - Open-source, cost-effective",
+            "mistral": "Mistral 7B - Fast and efficient"
+        }
+    }
 
 
 @app.post("/book/create")
