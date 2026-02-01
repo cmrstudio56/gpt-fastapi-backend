@@ -416,7 +416,13 @@ def save_book_metadata(book_title: str, metadata: dict, project: str = "default"
 def health_check():
     return {
         "status": "ok" if drive else "error",
-        "message": "API is running" if drive else "Google Drive not initialized"
+        "message": "API is running" if drive else "Google Drive not initialized",
+        "google_drive_ready": bool(drive),
+        "openrouter_configured": bool(OPENROUTER_API_KEY),
+        "env_vars": {
+            "GOOGLE_OAUTH_TOKEN_JSON": "✓ SET" if os.environ.get("GOOGLE_OAUTH_TOKEN_JSON") else "✗ NOT SET",
+            "OPENROUTER_API_KEY": "✓ SET" if OPENROUTER_API_KEY else "✗ NOT SET"
+        }
     }
 
 
@@ -608,6 +614,64 @@ def list_available_models():
             "mistral": "Mistral 7B - Fast and efficient"
         }
     }
+
+
+@app.get("/diagnose")
+def diagnose_system():
+    """Diagnose API and Google Drive connection status"""
+    diagnostics = {
+        "api_status": "✓ OK" if drive else "✗ ERROR",
+        "google_drive_initialized": bool(drive),
+        "environment_variables": {
+            "GOOGLE_OAUTH_TOKEN_JSON_set": bool(os.environ.get("GOOGLE_OAUTH_TOKEN_JSON")),
+            "OPENROUTER_API_KEY_set": bool(OPENROUTER_API_KEY)
+        },
+        "drive_folder_id": DRIVE_FOLDER_ID,
+        "recommendations": []
+    }
+    
+    # Check what's wrong
+    if not drive:
+        diagnostics["recommendations"].append(
+            "⚠️  Google Drive NOT initialized. Set GOOGLE_OAUTH_TOKEN_JSON on Railway."
+        )
+    else:
+        diagnostics["recommendations"].append("✓ Google Drive is properly connected")
+        
+    if not OPENROUTER_API_KEY:
+        diagnostics["recommendations"].append(
+            "⚠️  OpenRouter not configured. Set OPENROUTER_API_KEY for AI features."
+        )
+    else:
+        diagnostics["recommendations"].append("✓ OpenRouter API is configured")
+    
+    # Try to actually list the ISA_BRAIN folder
+    if drive:
+        try:
+            about = drive.about().get(fields='storageQuota').execute()
+            diagnostics["storage_quota"] = {
+                "limit_gb": about.get('storageQuota', {}).get('limit', 0) / (1024**3),
+                "usage_gb": about.get('storageQuota', {}).get('usage', 0) / (1024**3)
+            }
+            
+            # List files in ISA_BRAIN
+            res = drive.files().list(
+                q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
+                fields="files(name, mimeType, id, createdTime)",
+                pageSize=10
+            ).execute()
+            
+            files = res.get("files", [])
+            diagnostics["drive_folder_contents"] = {
+                "folder_id": DRIVE_FOLDER_ID,
+                "files_count": len(files),
+                "files": [{"name": f["name"], "type": f["mimeType"]} for f in files[:5]]
+            }
+        except Exception as e:
+            diagnostics["drive_error"] = str(e)
+            diagnostics["recommendations"].append(f"Google Drive error: {str(e)}")
+    
+    return diagnostics
 
 
 @app.post("/book/create")
