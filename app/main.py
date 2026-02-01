@@ -401,14 +401,14 @@ def list_files(path: str = "default"):
         
         # Separate folders and files
         folders = [f["name"] for f in files if f["mimeType"] == "application/vnd.google-apps.folder"]
-        text_files = [f["name"] for f in files if f["name"].endswith(".txt")]
+        all_files = [f["name"] for f in files if f["mimeType"] != "application/vnd.google-apps.folder"]
 
         return {
             "status": "success",
             "path": path,
             "folders": folders,
-            "files": text_files,
-            "total": len(text_files)
+            "files": all_files,
+            "total": len(all_files)
         }
     except Exception as e:
         return {
