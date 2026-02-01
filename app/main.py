@@ -370,7 +370,7 @@ SUMMARY:"""
         return simple_summarize(text, max_length)
 
 
-def get_book_metadata_file(book_title: str, project: str = "default") -> dict:
+def get_book_metadata_file(book_title: str, project: str = "default"):
     """Get metadata for a book (stored as JSON in a special file)"""
     if not drive:
         raise RuntimeError("Google Drive service not initialized")
@@ -378,13 +378,13 @@ def get_book_metadata_file(book_title: str, project: str = "default") -> dict:
     try:
         file = find_file(f"{book_title}_metadata", project)
         if not file:
-            return None
+            return {}
         
         content = read_file_from_drive(file["id"])
         return json.loads(content)
     except Exception as e:
         print(f"Error getting book metadata: {str(e)}")
-        return None
+        return {}
 
 
 def save_book_metadata(book_title: str, metadata: dict, project: str = "default"):
