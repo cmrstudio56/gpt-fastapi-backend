@@ -1,7 +1,17 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="GPT Writer API", version="1.0.0")
+app = FastAPI(
+    title="GPT Writer API",
+    description="Backend for Custom GPT Actions",
+    version="1.0.0",
+    servers=[
+        {
+            "url": "https://web-production-99e37.up.railway.app",
+            "description": "Production server"
+        }
+    ]
+)
 
 class WriteRequest(BaseModel):
     title: str
