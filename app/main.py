@@ -89,7 +89,7 @@ except Exception as e:
 app = FastAPI(
     title="GPT Writer API",
     description="Backend for Custom GPT Actions with OpenRouter AI Integration",
-    version="3.5.0",
+    version="3.6.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -462,6 +462,219 @@ def list_files(path: str = "default"):
         return {
             "status": "error",
             "message": f"Failed to list files: {str(e)}"
+        }
+
+
+@app.get("/list-all")
+def list_all_drive_contents():
+    """List ALL folders at root level (ISA_BRAIN)"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        res = drive.files().list(
+            q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
+            fields="files(id, name, mimeType, modifiedTime, size)",
+            spaces="drive",
+            pageSize=100
+        ).execute()
+
+        files = res.get("files", [])
+        
+        # Separate folders and files
+        folders = []
+        text_files = []
+        
+        for f in files:
+            if f["mimeType"] == "application/vnd.google-apps.folder":
+                folders.append({
+                    "name": f["name"],
+                    "type": "folder",
+                    "modified": f.get("modifiedTime", "N/A")
+                })
+            else:
+                folders.append({
+                    "name": f["name"],
+                    "type": "file",
+                    "size_bytes": f.get("size", 0),
+                    "modified": f.get("modifiedTime", "N/A")
+                })
+
+        return {
+            "status": "success",
+            "root_folder": "ISA_BRAIN",
+            "total_items": len(files),
+            "folders_count": len([f for f in files if f["mimeType"] == "application/vnd.google-apps.folder"]),
+            "items": folders
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list drive: {str(e)}"
+        }
+
+
+@app.get("/list-recursive")
+def list_recursive(path: str = "default", max_depth: int = 5):
+    """List all files and folders recursively (tree structure)"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    def build_tree(folder_id: str, depth: int = 0) -> dict:
+        if depth > max_depth:
+            return {"error": "Max depth reached"}
+        
+        try:
+            res = drive.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id, name, mimeType, size, modifiedTime)",
+                spaces="drive",
+                pageSize=50
+            ).execute()
+            
+            items = res.get("files", [])
+            result = {
+                "folders": [],
+                "files": []
+            }
+            
+            for item in items:
+                if item["mimeType"] == "application/vnd.google-apps.folder":
+                    result["folders"].append({
+                        "name": item["name"],
+                        "id": item["id"],
+                        "modified": item.get("modifiedTime"),
+                        "children": build_tree(item["id"], depth + 1)
+                    })
+                else:
+                    result["files"].append({
+                        "name": item["name"],
+                        "size_bytes": item.get("size", 0),
+                        "modified": item.get("modifiedTime")
+                    })
+            
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+    
+    try:
+        project_folder_id = get_or_create_folder(path)
+        tree = build_tree(project_folder_id)
+        
+        return {
+            "status": "success",
+            "path": path,
+            "tree": tree,
+            "max_depth": max_depth
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list recursively: {str(e)}"
+        }
+
+
+@app.get("/search")
+def search_drive(query: str, search_in: str = "all"):
+    """Search for files across entire drive"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        # Build query
+        if search_in == "all":
+            q = f"name contains '{query}' and trashed=false"
+        elif search_in == "folders":
+            q = f"name contains '{query}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        elif search_in == "files":
+            q = f"name contains '{query}' and mimeType!='application/vnd.google-apps.folder' and trashed=false"
+        else:
+            q = f"name contains '{query}' and trashed=false"
+        
+        res = drive.files().list(
+            q=q,
+            fields="files(id, name, mimeType, parents, modifiedTime, size)",
+            spaces="drive",
+            pageSize=100
+        ).execute()
+
+        results = []
+        for item in res.get("files", []):
+            results.append({
+                "name": item["name"],
+                "type": "folder" if item["mimeType"] == "application/vnd.google-apps.folder" else "file",
+                "size_bytes": item.get("size", 0),
+                "modified": item.get("modifiedTime"),
+                "id": item["id"]
+            })
+        
+        return {
+            "status": "success",
+            "query": query,
+            "search_in": search_in,
+            "results_count": len(results),
+            "results": results
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Search failed: {str(e)}"
+        }
+
+
+@app.get("/list-detailed")
+def list_detailed(path: str = "default"):
+    """List files with detailed information (size, dates, etc)"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        project_folder_id = get_or_create_folder(path)
+        
+        res = drive.files().list(
+            q=f"'{project_folder_id}' in parents and trashed=false",
+            fields="files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink)",
+            spaces="drive",
+            pageSize=100
+        ).execute()
+
+        files = res.get("files", [])
+        
+        detailed_items = []
+        for f in files:
+            detailed_items.append({
+                "name": f["name"],
+                "type": "folder" if f["mimeType"] == "application/vnd.google-apps.folder" else "file",
+                "size_bytes": int(f.get("size", 0)),
+                "size_kb": round(int(f.get("size", 0)) / 1024, 2),
+                "created": f.get("createdTime"),
+                "modified": f.get("modifiedTime"),
+                "url": f.get("webViewLink"),
+                "id": f["id"]
+            })
+        
+        return {
+            "status": "success",
+            "path": path,
+            "total_items": len(detailed_items),
+            "items": detailed_items
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list detailed: {str(e)}"
         }
 
 
