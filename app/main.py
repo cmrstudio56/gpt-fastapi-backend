@@ -89,7 +89,7 @@ except Exception as e:
 app = FastAPI(
     title="Isabella - Google Drive Manager",
     description="AI-powered Google Drive file manager with OpenRouter AI Integration",
-    version="4.0.0",
+    version="4.1.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -842,6 +842,204 @@ def diagnose_system():
     return diagnostics
 
 
+# ======================================================
+# FILE MANAGEMENT OPERATIONS (Phase 1)
+# ======================================================
+
+@app.delete("/delete")
+def delete_file(title: str, project: str = "default"):
+    """Delete a file permanently"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        file = find_file(title, project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}.txt' not found in project '{project}'"
+            }
+        
+        drive.files().delete(fileId=file["id"]).execute()
+        
+        return {
+            "status": "success",
+            "message": f"File '{title}' deleted from project '{project}'"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to delete file: {str(e)}"
+        }
+
+
+@app.post("/create-folder")
+def create_folder_endpoint(folder_name: str, parent_path: str = "default"):
+    """Create a new folder inside an existing folder"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        parent_id = get_or_create_folder(parent_path)
+        
+        # Create the new folder
+        file_metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id]
+        }
+        
+        folder = drive.files().create(
+            body=file_metadata,
+            fields="id, name"
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": f"Folder '{folder_name}' created",
+            "folder_id": folder.get("id"),
+            "folder_name": folder.get("name")
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to create folder: {str(e)}"
+        }
+
+
+@app.post("/move")
+def move_file(title: str, from_project: str, to_project: str):
+    """Move file from one folder to another"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        # Find file in source project
+        file = find_file(title, from_project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}' not found in project '{from_project}'"
+            }
+        
+        # Get destination folder ID
+        dest_folder_id = get_or_create_folder(to_project)
+        
+        # Get source folder ID to remove from
+        source_folder_id = get_or_create_folder(from_project)
+        
+        # Move the file
+        drive.files().update(
+            fileId=file["id"],
+            addParents=dest_folder_id,
+            removeParents=source_folder_id,
+            fields="id, parents"
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": f"File '{title}' moved from '{from_project}' to '{to_project}'"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to move file: {str(e)}"
+        }
+
+
+@app.post("/copy")
+def copy_file(title: str, project: str = "default", new_name: str = ""):
+    """Copy a file within the same project or to another project"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        # Find the file to copy
+        file = find_file(title, project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}' not found in project '{project}'"
+            }
+        
+        # Get project folder ID
+        project_folder_id = get_or_create_folder(project)
+        
+        # Create copy metadata
+        copy_name = new_name if new_name else f"{title}_copy"
+        copy_metadata = {
+            "name": f"{copy_name}.txt",
+            "parents": [project_folder_id]
+        }
+        
+        # Copy the file
+        copy_file_obj = drive.files().copy(
+            fileId=file["id"],
+            body=copy_metadata,
+            fields="id, name"
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": f"File copied as '{copy_name}'",
+            "original": title,
+            "copy_name": copy_name,
+            "copy_id": copy_file_obj.get("id")
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to copy file: {str(e)}"
+        }
+
+
+@app.get("/download")
+def download_file(title: str, project: str = "default"):
+    """Download/export file content as raw text"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        file = find_file(title, project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}' not found in project '{project}'"
+            }
+        
+        content = read_file_from_drive(file["id"])
+        
+        return {
+            "status": "success",
+            "filename": f"{title}.txt",
+            "project": project,
+            "content": content,
+            "content_length": len(content)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to download file: {str(e)}"
+        }
 
 
 # Book and Series endpoints removed - focusing on Google Drive management only
