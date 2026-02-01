@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 .env
 .env.local
+.env*.local
 .DS_Store
 *.log
 .git/
@@ -12,3 +13,11 @@ __pycache__/
 client_secret.json
 token.json
 *.txt
+*.key
+*.pem
+.idea/
+*.swp
+*.swo
+*.backup
+*.secrets
+credentials.json

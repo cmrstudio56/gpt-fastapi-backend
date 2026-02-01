@@ -11,14 +11,9 @@ The `GOOGLE_OAUTH_TOKEN_JSON` environment variable is **NOT SET** on Railway, so
 ## ✅ Solution (3 Steps)
 
 ### Step 1: Check Your Token
-You should have a file named `fastapi openrouter .txt` in your project folder containing your Google OAuth token:
-```
-***REMOVED***
-```
+You need to get your **Google OAuth token** from `token.json` file.
 
-**Wait - that's your OpenRouter key, not the Google token!**
-
-You need to get your **Google OAuth token** from `token.json` file:
+⚠️ **SECURITY NOTE:** Never commit API keys, tokens, or secrets to GitHub. Keep credentials only in environment variables.
 
 ```bash
 # On your local machine, find token.json
