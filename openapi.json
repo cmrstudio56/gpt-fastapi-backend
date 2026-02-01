@@ -3,7 +3,7 @@
   "info": {
     "title": "GPT Writer API",
     "description": "Backend for Custom GPT Actions with OpenRouter AI Integration, Google Drive storage, and multi-book management",
-    "version": "3.5.0",
+    "version": "3.6.0",
     "contact": {
       "name": "ISA_BRAIN",
       "url": "https://web-production-99e37.up.railway.app"
@@ -427,19 +427,10 @@
     "/book/update-metadata": {
       "post": {
         "summary": "Update Book Metadata",
-        "description": "Update metadata for an existing book",
+        "description": "Update metadata for an existing book (title comes from request body)",
         "operationId": "update_book_metadata",
         "tags": ["Book Management"],
         "parameters": [
-          {
-            "name": "title",
-            "in": "query",
-            "required": true,
-            "description": "Book title",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "project",
             "in": "query",
