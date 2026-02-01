@@ -121,7 +121,7 @@ class SummarizeRequest(BaseModel):
 def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
     """Get or create a folder, return its ID"""
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        raise RuntimeError("Google Drive service not initialized - check GOOGLE_OAUTH_TOKEN_JSON env var")
     
     try:
         # Check if folder exists
@@ -188,7 +188,7 @@ def find_file(title: str, project: str = "default"):
 def create_file(title: str, content: str, project: str = "default"):
     """Create a new file in a project folder"""
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        raise RuntimeError("Google Drive service not initialized - check GOOGLE_OAUTH_TOKEN_JSON env var")
     
     try:
         # Get or create project folder
@@ -222,7 +222,7 @@ def create_file(title: str, content: str, project: str = "default"):
 def read_file_from_drive(file_id: str):
     """Read content from a file in Google Drive"""
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        raise RuntimeError("Google Drive service not initialized - check GOOGLE_OAUTH_TOKEN_JSON env var")
     
     try:
         request = drive.files().get_media(fileId=file_id)
@@ -242,7 +242,7 @@ def read_file_from_drive(file_id: str):
 def append_file(file_id: str, content: str):
     """Append content to an existing file"""
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        raise RuntimeError("Google Drive service not initialized - check GOOGLE_OAUTH_TOKEN_JSON env var")
     
     try:
         existing = read_file_from_drive(file_id)
@@ -481,6 +481,9 @@ def list_recursive(path: str = "default", max_depth: int = 5):
     def build_tree(folder_id: str, depth: int = 0) -> dict:
         if depth > max_depth:
             return {"error": "Max depth reached"}
+        
+        if not drive:
+            return {"error": "Google Drive service not initialized"}
         
         try:
             res = drive.files().list(
