@@ -4,7 +4,7 @@ import os, json
 from io import BytesIO
 
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -129,9 +129,17 @@ def create_file(title: str, content: str):
             "parents": [DRIVE_FOLDER_ID]
         }
 
+        # Convert string content to file-like object
+        content_bytes = content.encode('utf-8')
+        media = MediaIoBaseUpload(
+            BytesIO(content_bytes),
+            mimetype='text/plain',
+            resumable=True
+        )
+
         file = drive.files().create(
             body=metadata,
-            media_body=content,
+            media_body=media,
             fields="id"
         ).execute()
         
@@ -170,9 +178,17 @@ def append_file(file_id: str, content: str):
         existing = read_file_from_drive(file_id)
         updated = existing + "\n\n" + content
 
+        # Convert string content to file-like object
+        content_bytes = updated.encode('utf-8')
+        media = MediaIoBaseUpload(
+            BytesIO(content_bytes),
+            mimetype='text/plain',
+            resumable=True
+        )
+
         drive.files().update(
             fileId=file_id,
-            media_body=updated
+            media_body=media
         ).execute()
     except Exception as e:
         print(f"Error appending to file {file_id}: {str(e)}")
