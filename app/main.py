@@ -17,6 +17,9 @@ class WriteRequest(BaseModel):
     title: str
     content: str
 
+class ReadRequest(BaseModel):
+    title: str
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "API is running"}
@@ -27,3 +30,13 @@ def write_text(req: WriteRequest):
     with open(filename, "a", encoding="utf-8") as f:
         f.write(req.content + "\n\n")
     return {"status": "success", "message": f"Content saved to {filename}"}
+
+@app.post("/read")
+def read_text(req: ReadRequest):
+    filename = f"{req.title}.txt"
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"status": "success", "content": content}
+    except FileNotFoundError:
+        return {"status": "error", "message": f"File {filename} not found"}
