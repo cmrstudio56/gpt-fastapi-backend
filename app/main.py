@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import os, json
 from io import BytesIO
@@ -1370,6 +1371,93 @@ def share_file(title: str, project: str = "default", email: str = "", role: str 
             "status": "error",
             "message": f"Failed to share file: {str(e)}"
         }
+
+
+# ======================================================
+# ORPHANED FILE AUDIT & REPAIR
+# ======================================================
+
+@app.post("/audit-orphaned-files")
+def audit_and_repair_orphaned_files(
+    file_type: str = "all", fix: bool = True, fixed_folder_name: str = "Books_Fixed", root_path: str = "default", max_depth: int = 10
+):
+    """Audit orphaned files (found by search but not tree traversal) and optionally move them to a fixed folder."""
+    if not drive:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Google Drive service not initialized"})
+
+    # 1. Collect all reachable file IDs from tree traversal
+    def collect_tree_file_ids(folder_id: str, depth: int = 0, ids=None):
+        if ids is None:
+            ids = set()
+        if depth > max_depth:
+            return ids
+        try:
+            if drive:
+                res = drive.files().list(  # type: ignore
+                    q=f"'{folder_id}' in parents and trashed=false",
+                    fields="files(id, name, mimeType)",
+                    spaces="drive",
+                    pageSize=100
+                ).execute()
+                for item in res.get("files", []):
+                    if item["mimeType"] == "application/vnd.google-apps.folder":
+                        ids = collect_tree_file_ids(item["id"], depth + 1, ids)
+                    else:
+                        ids.add(item["id"])
+        except Exception:
+            pass
+        return ids
+
+    root_folder_id = get_or_create_folder(root_path)
+    tree_file_ids = collect_tree_file_ids(root_folder_id)
+
+    # 2. Collect all files by search
+    if file_type == "pdf":
+        q = "mimeType='application/pdf' and trashed=false"
+    elif file_type == "all":
+        q = "trashed=false"
+    else:
+        q = f"mimeType='{file_type}' and trashed=false"
+    try:
+        res = drive.files().list(
+            q=q,
+            fields="files(id, name, mimeType, parents)",
+            spaces="drive",
+            pageSize=1000
+        ).execute()
+        all_files = res.get("files", [])
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": f"Search failed: {str(e)}"})
+
+    # 3. Identify orphans
+    orphaned = [f for f in all_files if f["id"] not in tree_file_ids]
+
+    # 4. Optionally move orphans to fixed folder
+    moved = []
+    if fix and orphaned:
+        fixed_folder_id = get_or_create_folder(fixed_folder_name, root_folder_id)
+        for f in orphaned:
+            try:
+                # Remove all parents, add to fixed folder
+                drive.files().update(
+                    fileId=f["id"],
+                    addParents=fixed_folder_id,
+                    removeParents=','.join(f.get("parents", [])) if f.get("parents") else None,
+                    fields="id, parents"
+                ).execute()
+                moved.append({"id": f["id"], "name": f["name"]})
+            except Exception:
+                pass
+
+    return {
+        "status": "success",
+        "tree_file_count": len(tree_file_ids),
+        "all_file_count": len(all_files),
+        "orphaned_count": len(orphaned),
+        "orphaned_files": [{"id": f["id"], "name": f["name"]} for f in orphaned],
+        "moved_count": len(moved),
+        "moved_files": moved
+    }
 
 
 # Book and Series endpoints removed - focusing on Google Drive management only
