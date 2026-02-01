@@ -1,0 +1,731 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "GPT Writer API",
+    "description": "Backend for Custom GPT Actions with OpenRouter AI Integration, Google Drive storage, and multi-book management",
+    "version": "3.5.0",
+    "contact": {
+      "name": "ISA_BRAIN",
+      "url": "https://web-production-99e37.up.railway.app"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://web-production-99e37.up.railway.app",
+      "description": "Production server"
+    },
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Check if API is running and Google Drive is initialized",
+        "operationId": "health_check",
+        "tags": ["System"],
+        "responses": {
+          "200": {
+            "description": "API status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["ok", "error"]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/write": {
+      "post": {
+        "summary": "Create File",
+        "description": "Create a new text file in a project folder on Google Drive",
+        "operationId": "write_text",
+        "tags": ["File Operations"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/read": {
+      "get": {
+        "summary": "Read File",
+        "description": "Read content from an existing file by title",
+        "operationId": "read_text",
+        "tags": ["File Operations"],
+        "parameters": [
+          {
+            "name": "title",
+            "in": "query",
+            "required": true,
+            "description": "Name of the file to read (without .txt extension)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder name (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "project": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/append": {
+      "post": {
+        "summary": "Append to File",
+        "description": "Append content to an existing file",
+        "operationId": "append_text",
+        "tags": ["File Operations"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Content appended successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/list": {
+      "get": {
+        "summary": "List Files and Folders",
+        "description": "List all files and subfolders in a project",
+        "operationId": "list_files",
+        "tags": ["File Operations"],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "description": "Project name to list (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of files and folders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "folders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/summarize": {
+      "post": {
+        "summary": "Read and Summarize File",
+        "description": "Read a file and summarize it using AI (OpenRouter) or extractive summarization",
+        "operationId": "summarize_file",
+        "tags": ["AI Features"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummarizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File summarized successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "content_length": {
+                      "type": "integer"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "method": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "project": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "summary": "List Available AI Models",
+        "description": "Get list of all available AI models from OpenRouter",
+        "operationId": "list_available_models",
+        "tags": ["AI Features"],
+        "responses": {
+          "200": {
+            "description": "Available models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "models_available": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "openrouter_configured": {
+                      "type": "boolean"
+                    },
+                    "model_details": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/book/create": {
+      "post": {
+        "summary": "Create Book",
+        "description": "Create a new book with metadata",
+        "operationId": "create_book",
+        "tags": ["Book Management"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookMetadata"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Book created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "$ref": "#/components/schemas/BookMetadata"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/book/metadata": {
+      "get": {
+        "summary": "Get Book Metadata",
+        "description": "Retrieve metadata for a specific book",
+        "operationId": "get_book_info",
+        "tags": ["Book Management"],
+        "parameters": [
+          {
+            "name": "title",
+            "in": "query",
+            "required": true,
+            "description": "Book title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Book metadata retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "$ref": "#/components/schemas/BookMetadata"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/book/update-metadata": {
+      "post": {
+        "summary": "Update Book Metadata",
+        "description": "Update metadata for an existing book",
+        "operationId": "update_book_metadata",
+        "tags": ["Book Management"],
+        "parameters": [
+          {
+            "name": "title",
+            "in": "query",
+            "required": true,
+            "description": "Book title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookMetadata"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Metadata updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/series/list": {
+      "get": {
+        "summary": "List Books by Series",
+        "description": "Get all books grouped and sorted by series",
+        "operationId": "list_series",
+        "tags": ["Book Management"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Series and books retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "project": {
+                      "type": "string"
+                    },
+                    "series": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string"
+                            },
+                            "book_number": {
+                              "type": "integer"
+                            },
+                            "author": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "total_series": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/book/chapter-count": {
+      "get": {
+        "summary": "Get Chapter Count",
+        "description": "Get the number of chapters for a specific book",
+        "operationId": "get_chapter_count",
+        "tags": ["Book Management"],
+        "parameters": [
+          {
+            "name": "title",
+            "in": "query",
+            "required": true,
+            "description": "Book title",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Project folder (default is 'default')",
+            "schema": {
+              "type": "string",
+              "default": "default"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chapter count retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "chapters": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "WriteRequest": {
+        "type": "object",
+        "required": ["title", "content"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Name of the file (will be saved as .txt)"
+          },
+          "content": {
+            "type": "string",
+            "description": "Content to write to the file"
+          },
+          "project": {
+            "type": "string",
+            "description": "Project folder name",
+            "default": "default"
+          }
+        }
+      },
+      "SummarizeRequest": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Name of the file to summarize"
+          },
+          "project": {
+            "type": "string",
+            "description": "Project folder name",
+            "default": "default"
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Maximum length of summary in characters",
+            "default": 300
+          },
+          "model": {
+            "type": "string",
+            "description": "AI model to use for summarization",
+            "enum": [
+              "claude-3-5-sonnet",
+              "claude-3-opus",
+              "gpt-4o",
+              "gpt-4-turbo",
+              "llama-2",
+              "mistral"
+            ],
+            "default": "claude-3-5-sonnet"
+          }
+        }
+      },
+      "BookMetadata": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Book title"
+          },
+          "author": {
+            "type": "string",
+            "description": "Author name",
+            "default": ""
+          },
+          "series": {
+            "type": "string",
+            "description": "Series name (leave empty if standalone)",
+            "default": ""
+          },
+          "book_number": {
+            "type": "integer",
+            "description": "Number in series (0 for standalone)",
+            "default": 0
+          },
+          "genre": {
+            "type": "string",
+            "description": "Book genre",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "description": "Writing status",
+            "enum": ["draft", "in-progress", "completed"],
+            "default": "draft"
+          },
+          "chapters": {
+            "type": "integer",
+            "description": "Number of chapters",
+            "default": 0
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "System health and status endpoints"
+    },
+    {
+      "name": "File Operations",
+      "description": "Basic file CRUD operations"
+    },
+    {
+      "name": "AI Features",
+      "description": "AI-powered features using OpenRouter"
+    },
+    {
+      "name": "Book Management",
+      "description": "Multi-book and series management"
+    }
+  ]
+}
