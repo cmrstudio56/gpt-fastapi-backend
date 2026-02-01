@@ -74,7 +74,7 @@ except Exception as e:
 app = FastAPI(
     title="GPT Writer API",
     description="Backend for Custom GPT Actions",
-    version="3.1.0",
+    version="3.2.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -90,20 +90,65 @@ app = FastAPI(
 class WriteRequest(BaseModel):
     title: str
     content: str
+    project: str = "default"  # Optional project folder
 
 # ======================================================
 # HELPERS
 # ======================================================
 
-def find_file(title: str):
-    """Find a file by title in the Drive folder"""
+def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
+    """Get or create a folder, return its ID"""
+    if not drive:
+        raise RuntimeError("Google Drive service not initialized")
+    
+    try:
+        # Check if folder exists
+        query = (
+            f"name='{folder_name}' and "
+            f"mimeType='application/vnd.google-apps.folder' and "
+            f"'{parent_id}' in parents and trashed=false"
+        )
+        
+        res = drive.files().list(
+            q=query,
+            fields="files(id, name)",
+            spaces="drive"
+        ).execute()
+        
+        files = res.get("files", [])
+        if files:
+            return files[0]["id"]
+        
+        # Create folder if it doesn't exist
+        file_metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id]
+        }
+        
+        folder = drive.files().create(
+            body=file_metadata,
+            fields="id"
+        ).execute()
+        
+        return folder.get("id")
+    except Exception as e:
+        print(f"Error with folder {folder_name}: {str(e)}")
+        raise
+
+
+def find_file(title: str, project: str = "default"):
+    """Find a file by title in a project folder"""
     if not drive:
         return None
     
     try:
+        # Get project folder ID
+        project_folder_id = get_or_create_folder(project)
+        
         query = (
             f"name='{title}.txt' and "
-            f"'{DRIVE_FOLDER_ID}' in parents and trashed=false"
+            f"'{project_folder_id}' in parents and trashed=false"
         )
 
         res = drive.files().list(
@@ -118,15 +163,18 @@ def find_file(title: str):
         return None
 
 
-def create_file(title: str, content: str):
-    """Create a new file in Google Drive"""
+def create_file(title: str, content: str, project: str = "default"):
+    """Create a new file in a project folder"""
     if not drive:
         raise RuntimeError("Google Drive service not initialized")
     
     try:
+        # Get or create project folder
+        project_folder_id = get_or_create_folder(project)
+        
         metadata = {
             "name": f"{title}.txt",
-            "parents": [DRIVE_FOLDER_ID]
+            "parents": [project_folder_id]
         }
 
         # Convert string content to file-like object
@@ -207,7 +255,8 @@ def health_check():
 
 
 @app.get("/list")
-def list_files():
+def list_files(path: str = "default"):
+    """List files in a project folder"""
     if not drive:
         return {
             "status": "error",
@@ -215,14 +264,27 @@ def list_files():
         }
     
     try:
+        # Get the folder ID for the path
+        project_folder_id = get_or_create_folder(path)
+        
         res = drive.files().list(
-            q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
-            fields="files(name)"
+            q=f"'{project_folder_id}' in parents and trashed=false",
+            fields="files(name, mimeType)",
+            spaces="drive"
         ).execute()
+
+        files = res.get("files", [])
+        
+        # Separate folders and files
+        folders = [f["name"] for f in files if f["mimeType"] == "application/vnd.google-apps.folder"]
+        text_files = [f["name"] for f in files if f["name"].endswith(".txt")]
 
         return {
             "status": "success",
-            "files": [f["name"] for f in res.get("files", [])]
+            "path": path,
+            "folders": folders,
+            "files": text_files,
+            "total": len(text_files)
         }
     except Exception as e:
         return {
@@ -240,17 +302,17 @@ def write_text(req: WriteRequest):
         }
     
     try:
-        if find_file(req.title):
+        if find_file(req.title, req.project):
             return {
                 "status": "error",
-                "message": "File already exists. Use /append."
+                "message": f"File already exists in project '{req.project}'. Use /append."
             }
 
-        file_id = create_file(req.title, req.content)
+        file_id = create_file(req.title, req.content, req.project)
 
         return {
             "status": "success",
-            "message": f"File created in Google Drive (ID: {file_id})"
+            "message": f"File created in project '{req.project}' (ID: {file_id})"
         }
     except Exception as e:
         return {
@@ -260,7 +322,7 @@ def write_text(req: WriteRequest):
 
 
 @app.get("/read")
-def read_text(title: str):
+def read_text(title: str, project: str = "default"):
     if not drive:
         return {
             "status": "error",
@@ -268,19 +330,20 @@ def read_text(title: str):
         }
     
     try:
-        file = find_file(title)
+        file = find_file(title, project)
         
         if not file:
             return {
                 "status": "error",
-                "message": f"File '{title}.txt' not found"
+                "message": f"File '{title}.txt' not found in project '{project}'"
             }
 
         content = read_file_from_drive(file["id"])
         
         return {
             "status": "success",
-            "content": content
+            "content": content,
+            "project": project
         }
     except Exception as e:
         return {
@@ -298,19 +361,19 @@ def append_text(req: WriteRequest):
         }
     
     try:
-        file = find_file(req.title)
+        file = find_file(req.title, req.project)
 
         if not file:
             return {
                 "status": "error",
-                "message": "File not found. Use /write first."
+                "message": f"File not found in project '{req.project}'. Use /write first."
             }
 
         append_file(file["id"], req.content)
 
         return {
             "status": "success",
-            "message": "Content appended in Google Drive."
+            "message": f"Content appended in project '{req.project}'."
         }
     except Exception as e:
         return {
