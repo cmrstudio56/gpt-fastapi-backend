@@ -89,7 +89,7 @@ except Exception as e:
 app = FastAPI(
     title="Isabella - Google Drive Manager",
     description="AI-powered Google Drive file manager with OpenRouter AI Integration",
-    version="4.1.0",
+    version="4.2.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -1039,6 +1039,336 @@ def download_file(title: str, project: str = "default"):
         return {
             "status": "error",
             "message": f"Failed to download file: {str(e)}"
+        }
+
+
+# ======================================================
+# FOLDER MANAGEMENT & ADVANCED OPERATIONS (Phase 2)
+# ======================================================
+
+@app.delete("/delete-folder")
+def delete_folder(folder_name: str, parent_path: str = "default"):
+    """Delete an entire folder and all its contents"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        parent_id = get_or_create_folder(parent_path)
+        
+        # Find the folder to delete
+        query = (
+            f"name='{folder_name}' and "
+            f"mimeType='application/vnd.google-apps.folder' and "
+            f"'{parent_id}' in parents and trashed=false"
+        )
+        
+        res = drive.files().list(
+            q=query,
+            fields="files(id, name)",
+            spaces="drive"
+        ).execute()
+        
+        files = res.get("files", [])
+        
+        if not files:
+            return {
+                "status": "error",
+                "message": f"Folder '{folder_name}' not found in '{parent_path}'"
+            }
+        
+        folder_id = files[0]["id"]
+        drive.files().delete(fileId=folder_id).execute()
+        
+        return {
+            "status": "success",
+            "message": f"Folder '{folder_name}' and all contents deleted"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to delete folder: {str(e)}"
+        }
+
+
+@app.get("/trash")
+def list_trash(max_items: int = 50):
+    """List all deleted files in trash"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        res = drive.files().list(
+            q="trashed=true",
+            fields="files(id, name, mimeType, trashedTime, size)",
+            pageSize=max_items,
+            spaces="drive"
+        ).execute()
+        
+        trashed_files = []
+        for f in res.get("files", []):
+            trashed_files.append({
+                "name": f["name"],
+                "id": f["id"],
+                "type": "folder" if f["mimeType"] == "application/vnd.google-apps.folder" else "file",
+                "trashed_time": f.get("trashedTime"),
+                "size_bytes": f.get("size", 0)
+            })
+        
+        return {
+            "status": "success",
+            "items_count": len(trashed_files),
+            "items": trashed_files
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list trash: {str(e)}"
+        }
+
+
+@app.post("/restore")
+def restore_from_trash(file_id: str, restore_to_project: str = "default"):
+    """Restore a deleted file from trash"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        # Get the file details
+        file = drive.files().get(
+            fileId=file_id,
+            fields="id, name, mimeType"
+        ).execute()
+        
+        if not file.get("id"):
+            return {
+                "status": "error",
+                "message": "File not found in trash"
+            }
+        
+        # Get destination folder
+        dest_folder_id = get_or_create_folder(restore_to_project)
+        
+        # Restore by removing trashed status and adding to folder
+        drive.files().update(
+            fileId=file_id,
+            addParents=dest_folder_id,
+            removeParents=None
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": f"File '{file.get('name')}' restored to '{restore_to_project}'",
+            "file_name": file.get("name"),
+            "restored_to": restore_to_project
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to restore file: {str(e)}"
+        }
+
+
+@app.delete("/empty-trash")
+def empty_trash():
+    """Permanently delete all trashed files"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        # Get all trashed files
+        res = drive.files().list(
+            q="trashed=true",
+            fields="files(id)",
+            pageSize=1000,
+            spaces="drive"
+        ).execute()
+        
+        trashed = res.get("files", [])
+        count = 0
+        
+        # Delete each one
+        for f in trashed:
+            try:
+                drive.files().delete(fileId=f["id"]).execute()
+                count += 1
+            except:
+                pass  # Continue even if one fails
+        
+        return {
+            "status": "success",
+            "message": f"Permanently deleted {count} items from trash",
+            "items_deleted": count
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to empty trash: {str(e)}"
+        }
+
+
+@app.get("/folder-stats")
+def folder_statistics(path: str = "default"):
+    """Get detailed statistics about a folder"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        folder_id = get_or_create_folder(path)
+        
+        res = drive.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            fields="files(mimeType, size)",
+            pageSize=1000,
+            spaces="drive"
+        ).execute()
+        
+        files = res.get("files", [])
+        
+        # Calculate stats
+        total_size = 0
+        folder_count = 0
+        file_count = 0
+        file_types = {}
+        
+        for f in files:
+            if f["mimeType"] == "application/vnd.google-apps.folder":
+                folder_count += 1
+            else:
+                file_count += 1
+                size = int(f.get("size", 0))
+                total_size += size
+                
+                # Track file types
+                mime_type = f["mimeType"]
+                file_types[mime_type] = file_types.get(mime_type, 0) + 1
+        
+        return {
+            "status": "success",
+            "path": path,
+            "folder_count": folder_count,
+            "file_count": file_count,
+            "total_items": folder_count + file_count,
+            "total_size_bytes": total_size,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "file_types": file_types
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to get folder stats: {str(e)}"
+        }
+
+
+@app.get("/metadata")
+def file_metadata(title: str, project: str = "default"):
+    """Get detailed metadata about a file"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        file = find_file(title, project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}' not found in project '{project}'"
+            }
+        
+        # Get full file metadata
+        metadata = drive.files().get(
+            fileId=file["id"],
+            fields="id, name, mimeType, size, createdTime, modifiedTime, viewedByMeTime, owners, permissions, webViewLink, parents, description, starred, trashed"
+        ).execute()
+        
+        return {
+            "status": "success",
+            "file_id": metadata.get("id"),
+            "name": metadata.get("name"),
+            "mime_type": metadata.get("mimeType"),
+            "size_bytes": int(metadata.get("size", 0)),
+            "size_mb": round(int(metadata.get("size", 0)) / (1024 * 1024), 2),
+            "created": metadata.get("createdTime"),
+            "modified": metadata.get("modifiedTime"),
+            "viewed": metadata.get("viewedByMeTime"),
+            "owners": [o.get("displayName") for o in metadata.get("owners", [])],
+            "url": metadata.get("webViewLink"),
+            "starred": metadata.get("starred", False),
+            "trashed": metadata.get("trashed", False),
+            "description": metadata.get("description", "")
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to get metadata: {str(e)}"
+        }
+
+
+@app.post("/share")
+def share_file(title: str, project: str = "default", email: str = "", role: str = "reader"):
+    """Share a file with an email address (role: reader, writer, owner)"""
+    if not drive:
+        return {
+            "status": "error",
+            "message": "Google Drive service not initialized"
+        }
+    
+    try:
+        if not email:
+            return {
+                "status": "error",
+                "message": "Email address required for sharing"
+            }
+        
+        file = find_file(title, project)
+        
+        if not file:
+            return {
+                "status": "error",
+                "message": f"File '{title}' not found in project '{project}'"
+            }
+        
+        # Create permission
+        permission = {
+            "type": "user",
+            "role": role,
+            "emailAddress": email
+        }
+        
+        drive.permissions().create(
+            fileId=file["id"],
+            body=permission,
+            fields="id"
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": f"File '{title}' shared with {email} as {role}",
+            "file": title,
+            "shared_with": email,
+            "role": role
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to share file: {str(e)}"
         }
 
 
