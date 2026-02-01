@@ -1,4 +1,6 @@
+# Python dependencies
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 python-dotenv
+gunicorn
