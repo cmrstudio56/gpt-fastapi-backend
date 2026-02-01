@@ -87,9 +87,9 @@ except Exception as e:
 # ======================================================
 
 app = FastAPI(
-    title="GPT Writer API",
-    description="Backend for Custom GPT Actions with OpenRouter AI Integration",
-    version="3.6.0",
+    title="Isabella - Google Drive Manager",
+    description="AI-powered Google Drive file manager with OpenRouter AI Integration",
+    version="4.0.0",
     servers=[
         {
             "url": "https://web-production-99e37.up.railway.app",
@@ -106,16 +106,6 @@ class WriteRequest(BaseModel):
     title: str
     content: str
     project: str = "default"  # Optional project folder
-
-
-class BookMetadata(BaseModel):
-    title: str
-    author: str = ""
-    series: str = ""  # Series name
-    book_number: int = 0  # Number in series
-    genre: str = ""
-    status: str = "draft"  # draft, in-progress, completed
-    chapters: int = 0
 
 
 class SummarizeRequest(BaseModel):
@@ -369,44 +359,6 @@ SUMMARY:"""
         print(f"Error with OpenRouter summarization: {str(e)}")
         return simple_summarize(text, max_length)
 
-
-def get_book_metadata_file(book_title: str, project: str = "default"):
-    """Get metadata for a book (stored as JSON in a special file)"""
-    if not drive:
-        raise RuntimeError("Google Drive service not initialized")
-    
-    try:
-        file = find_file(f"{book_title}_metadata", project)
-        if not file:
-            return {}
-        
-        content = read_file_from_drive(file["id"])
-        return json.loads(content)
-    except Exception as e:
-        print(f"Error getting book metadata: {str(e)}")
-        return {}
-
-
-def save_book_metadata(book_title: str, metadata: dict, project: str = "default"):
-    """Save book metadata (as JSON)"""
-    if not drive:
-        raise RuntimeError("Google Drive service not initialized")
-    
-    try:
-        # Check if metadata file exists
-        file = find_file(f"{book_title}_metadata", project)
-        
-        metadata_json = json.dumps(metadata, indent=2)
-        
-        if file:
-            # Update existing
-            append_file(file["id"], metadata_json)
-        else:
-            # Create new (overwrite mode)
-            create_file(f"{book_title}_metadata", metadata_json, project)
-    except Exception as e:
-        print(f"Error saving book metadata: {str(e)}")
-        raise
 
 # ======================================================
 # ENDPOINTS
@@ -887,173 +839,6 @@ def diagnose_system():
     return diagnostics
 
 
-@app.post("/book/create")
-def create_book(metadata: BookMetadata, project: str = "default"):
-    """Create a new book with metadata"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        # Check if book already exists
-        if find_file(metadata.title, project):
-            return {
-                "status": "error",
-                "message": f"Book '{metadata.title}' already exists in project '{project}'"
-            }
-        
-        # Create book file (empty initially)
-        book_content = f"# {metadata.title}\n\n[Book content will be added here]\n"
-        create_file(metadata.title, book_content, project)
-        
-        # Save metadata
-        metadata_dict = metadata.dict()
-        save_book_metadata(metadata.title, metadata_dict, project)
-        
-        return {
-            "status": "success",
-            "message": f"Book '{metadata.title}' created",
-            "metadata": metadata_dict
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to create book: {str(e)}"
-        }
 
 
-@app.get("/book/metadata")
-def get_book_info(title: str, project: str = "default"):
-    """Get book metadata"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        metadata = get_book_metadata_file(title, project)
-        
-        if not metadata:
-            return {
-                "status": "error",
-                "message": f"Book '{title}' metadata not found"
-            }
-        
-        return {
-            "status": "success",
-            "metadata": metadata
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to get book info: {str(e)}"
-        }
-
-
-@app.post("/book/update-metadata")
-def update_book_metadata(title: str, metadata: BookMetadata, project: str = "default"):
-    """Update book metadata"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        save_book_metadata(title, metadata.dict(), project)
-        
-        return {
-            "status": "success",
-            "message": f"Book '{title}' metadata updated"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to update book metadata: {str(e)}"
-        }
-
-
-@app.get("/series/list")
-def list_series(project: str = "default"):
-    """List all books grouped by series"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        files_response = drive.files().list(
-            q=f"name like '%_metadata' and '{get_or_create_folder(project)}' in parents and trashed=false",
-            fields="files(name, id)",
-            spaces="drive"
-        ).execute()
-        
-        series_dict = {}
-        
-        for file in files_response.get("files", []):
-            try:
-                content = read_file_from_drive(file["id"])
-                metadata = json.loads(content)
-                
-                series_name = metadata.get("series", "Standalone")
-                if series_name not in series_dict:
-                    series_dict[series_name] = []
-                
-                series_dict[series_name].append({
-                    "title": metadata.get("title"),
-                    "book_number": metadata.get("book_number"),
-                    "author": metadata.get("author"),
-                    "status": metadata.get("status")
-                })
-            except:
-                pass
-        
-        # Sort books within each series by book_number
-        for series in series_dict:
-            series_dict[series].sort(key=lambda x: x["book_number"])
-        
-        return {
-            "status": "success",
-            "project": project,
-            "series": series_dict,
-            "total_series": len(series_dict)
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list series: {str(e)}"
-        }
-
-
-@app.get("/book/chapter-count")
-def get_chapter_count(title: str, project: str = "default"):
-    """Get chapter count for a book"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        metadata = get_book_metadata_file(title, project)
-        
-        if not metadata:
-            return {
-                "status": "error",
-                "message": f"Book '{title}' not found"
-            }
-        
-        return {
-            "status": "success",
-            "title": title,
-            "chapters": metadata.get("chapters", 0)
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to get chapter count: {str(e)}"
-        }
+# Book and Series endpoints removed - focusing on Google Drive management only
