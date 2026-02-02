@@ -38,7 +38,7 @@ deps = [
     "uvicorn",
     "pydantic",
     "google.oauth2.credentials",
-    "google.auth.oauthlib.flow",
+    "google_auth_oauthlib.flow",
     "googleapiclient.discovery",
     "requests"
 ]
