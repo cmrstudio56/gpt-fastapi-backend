@@ -1,45 +1,53 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-import os, json
-from io import BytesIO
-import re
-import requests
+"""
+ISABELLA - MASTER STORYTELLER GPT
+Advanced FastAPI Backend for Professional Story Generation
+Version 5.0 - Elite Writer Architecture
+"""
 
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
+import os
+import json
+import requests
+from io import BytesIO
+from datetime import datetime
+from pathlib import Path
+
+# Google Drive & Auth
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# ======================================================
-# CONFIG
-# ======================================================
+# ========================================
+# CONFIGURATION
+# ========================================
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"  # ISA_BRAIN root
 
-# ISA_BRAIN folder ID
-DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"
-
-# OpenRouter config
+# OpenRouter Configuration
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_BASE_URL = "https://openrouter.io/api/v1"
-# Popular models available on OpenRouter
-AVAILABLE_MODELS = {
-    "claude-3-5-sonnet": "anthropic/claude-3.5-sonnet",
-    "claude-3-opus": "anthropic/claude-3-opus",
-    "gpt-4o": "openai/gpt-4o",
-    "gpt-4-turbo": "openai/gpt-4-turbo",
-    "llama-2": "meta-llama/llama-2-70b-chat",
-    "mistral": "mistralai/mistral-7b-instruct"
+
+# Primary writing models (in priority order)
+WRITING_MODELS = {
+    "claude-3-5-sonnet": "anthropic/claude-3.5-sonnet",      # Best for narrative
+    "gpt-4o": "openai/gpt-4o",                               # Best for dialogue
+    "claude-3-opus": "anthropic/claude-3-opus",              # Alternative narrative
+    "llama-2": "meta-llama/llama-2-70b-chat"                 # Experimental/diverse
 }
 
-# ======================================================
-# GOOGLE DRIVE AUTH
-# ======================================================
+# ========================================
+# GOOGLE DRIVE AUTHENTICATION
+# ========================================
 
 def get_drive_service():
+    """Initialize Google Drive service with OAuth"""
     creds = None
-
-    # Railway / production (token from env)
+    
+    # Railway production
     if os.environ.get("GOOGLE_OAUTH_TOKEN_JSON"):
         try:
             creds = Credentials.from_authorized_user_info(
@@ -48,797 +56,430 @@ def get_drive_service():
             )
         except Exception as e:
             raise RuntimeError(f"Failed to load credentials from env: {str(e)}")
-
-    # Local dev (existing token.json)
+    
+    # Local development
     elif os.path.exists("token.json"):
         try:
-            creds = Credentials.from_authorized_user_file(
-                "token.json", SCOPES
-            )
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
         except Exception as e:
             raise RuntimeError(f"Failed to load token.json: {str(e)}")
-
-    # First-time local OAuth
+    
+    # First-time OAuth
     else:
         try:
             flow = InstalledAppFlow.from_client_secrets_file(
                 "client_secret.json", SCOPES
             )
             creds = flow.run_local_server(port=0)
-
             with open("token.json", "w") as f:
                 f.write(creds.to_json())
         except FileNotFoundError:
-            raise RuntimeError("client_secret.json not found. Please add Google OAuth credentials.")
+            raise RuntimeError("client_secret.json not found")
         except Exception as e:
             raise RuntimeError(f"OAuth flow failed: {str(e)}")
-
+    
     return build("drive", "v3", credentials=creds)
-
 
 try:
     drive = get_drive_service()
 except Exception as e:
-    print(f"ERROR: Could not initialize Google Drive: {str(e)}")
+    print(f"ERROR: Google Drive not initialized: {str(e)}")
     drive = None
 
-# ======================================================
+# ========================================
 # FASTAPI APP
-# ======================================================
+# ========================================
 
 app = FastAPI(
-    title="Isabella - Google Drive Manager",
-    description="AI-powered Google Drive file manager with OpenRouter AI Integration",
-    version="4.0.0",
-    servers=[
-        {
-            "url": "https://web-production-99e37.up.railway.app",
-            "description": "Production server"
-        }
-    ]
+    title="Isabella - Master Storyteller",
+    description="Elite professional story generation with Google Drive integration",
+    version="5.0.0",
+    servers=[{
+        "url": "https://web-production-99e37.up.railway.app",
+        "description": "Production server"
+    }]
 )
 
-# ======================================================
-# MODELS
-# ======================================================
+# ========================================
+# DATA MODELS
+# ========================================
 
-class WriteRequest(BaseModel):
-    title: str
-    content: str
-    project: str = "default"  # Optional project folder
+class StoryPrompt(BaseModel):
+    prompt: str
+    genre: str = "auto"  # auto-detect or specify (literary, scifi, thriller, etc.)
+    length: str = "chapter"  # chapter (3-4k), short (1-2k), long (5-8k)
+    project_name: str = "Isabella_Stories"
+    model: str = "claude-3-5-sonnet"
 
+class StoryTitle(BaseModel):
+    project_name: str
+    title: str = "Untitled"
 
-class SummarizeRequest(BaseModel):
-    title: str
-    project: str = "default"
-    max_length: int = 300  # Characters in summary
-    model: str = "claude-3-5-sonnet"  # AI model to use (optional, falls back to simple summarization)
+class ContinueStory(BaseModel):
+    project_name: str
+    context: str  # Brief recap of where story left off
+    model: str = "claude-3-5-sonnet"
 
-# ======================================================
-# HELPERS
-# ======================================================
+class ReviseChapter(BaseModel):
+    project_name: str
+    chapter_num: int
+    feedback: str  # What needs to change (tone, pacing, etc.)
+    model: str = "claude-3-5-sonnet"
 
-def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
-    """Get or create a folder, return its ID"""
-    if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+# ========================================
+# OPENROUTER INTEGRATION
+# ========================================
+
+def call_writer_model(prompt: str, model: str = "claude-3-5-sonnet", system_instruction: str = None) -> str:
+    """
+    Call OpenRouter API with Isabella system instruction
+    Returns generated story text
+    """
+    
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not configured")
+    
+    model_key = WRITING_MODELS.get(model, WRITING_MODELS["claude-3-5-sonnet"])
+    
+    # Isabella master system instruction
+    system = system_instruction or """You are Isabella, a master storyteller and professional author with 20+ years of published experience across fiction, screenwriting, and long-form narrative.
+
+CRITICAL DIRECTIVES:
+1. Write publishable-quality prose immediately (not drafts)
+2. Show, never tell. Subtext drives narrative.
+3. Every scene is necessary. No filler, no redundancy.
+4. Character authenticity: genuine motivation, never plot convenience.
+5. Dialogue reveals character or advances plot—never explanatory.
+6. Thematic depth: stories resonate beyond their surface plot.
+7. Unique voice for each story—never template-driven.
+8. Assume intelligent reader. Trust them to discover meaning.
+
+YOUR RESPONSIBILITY:
+- Generate complete, publishable scenes (minimum 500 words per scene)
+- Maintain tonal and stylistic consistency within story
+- Escalate stakes and emotional resonance continuously
+- Make creative decisions unilaterally without apology
+- Deliver work that would be accepted by major literary agents
+
+WRITE NOW. No explanations. No outlines. Only complete scenes."""
+    
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://isabella.ai",
+        "X-Title": "Isabella Story Generator"
+    }
+    
+    payload = {
+        "model": model_key,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.9,
+        "max_tokens": 8000,
+        "top_p": 0.95,
+    }
     
     try:
-        # Check if folder exists
-        query = (
-            f"name='{folder_name}' and "
-            f"mimeType='application/vnd.google-apps.folder' and "
-            f"'{parent_id}' in parents and trashed=false"
+        response = requests.post(
+            f"{OPENROUTER_BASE_URL}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120
         )
+        response.raise_for_status()
         
-        res = drive.files().list(
-            q=query,
-            fields="files(id, name)",
-            spaces="drive"
-        ).execute()
+        result = response.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            return result["choices"][0]["message"]["content"]
+        else:
+            raise RuntimeError("Invalid OpenRouter response")
+    
+    except Exception as e:
+        raise RuntimeError(f"OpenRouter API error: {str(e)}")
+
+def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
+    """Get or create a folder in Google Drive"""
+    if not drive:
+        raise RuntimeError("Google Drive not initialized")
+    
+    try:
+        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+        res = drive.files().list(q=query, fields="files(id, name)", spaces="drive").execute()
         
-        files = res.get("files", [])
-        if files:
-            return files[0]["id"]
+        if res.get("files"):
+            return res["files"][0]["id"]
         
-        # Create folder if it doesn't exist
-        file_metadata = {
+        # Create if doesn't exist
+        metadata = {
             "name": folder_name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id]
         }
-        
-        folder = drive.files().create(
-            body=file_metadata,
-            fields="id"
-        ).execute()
-        
+        folder = drive.files().create(body=metadata, fields="id").execute()
         return folder.get("id")
-    except Exception as e:
-        print(f"Error with folder {folder_name}: {str(e)}")
-        raise
-
-
-def find_file(title: str, project: str = "default"):
-    """Find a file by title in a project folder"""
-    if not drive:
-        return None
     
-    try:
-        # Get project folder ID
-        project_folder_id = get_or_create_folder(project)
-        
-        query = (
-            f"name='{title}.txt' and "
-            f"'{project_folder_id}' in parents and trashed=false"
-        )
-
-        res = drive.files().list(
-            q=query,
-            fields="files(id, name)"
-        ).execute()
-
-        files = res.get("files", [])
-        return files[0] if files else None
     except Exception as e:
-        print(f"Error finding file {title}: {str(e)}")
-        return None
+        raise RuntimeError(f"Folder operation failed: {str(e)}")
 
-
-def create_file(title: str, content: str, project: str = "default"):
-    """Create a new file in a project folder"""
+def save_chapter_to_drive(project_name: str, chapter_title: str, content: str, chapter_num: int = None) -> dict:
+    """Save story chapter to Google Drive"""
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        raise RuntimeError("Google Drive not initialized")
     
     try:
         # Get or create project folder
-        project_folder_id = get_or_create_folder(project)
+        project_folder_id = get_or_create_folder(project_name)
         
-        metadata = {
-            "name": f"{title}.txt",
+        # Create filename
+        if chapter_num:
+            filename = f"Chapter_{chapter_num}_{chapter_title}.txt"
+        else:
+            filename = f"{chapter_title}.txt"
+        
+        # Create file in Drive
+        file_metadata = {
+            "name": filename,
             "parents": [project_folder_id]
         }
-
-        # Convert string content to file-like object
-        content_bytes = content.encode('utf-8')
-        media = MediaIoBaseUpload(
-            BytesIO(content_bytes),
-            mimetype='text/plain',
-            resumable=True
-        )
-
+        
         file = drive.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id"
+            body=file_metadata,
+            media_body=MediaIoBaseUpload(
+                BytesIO(content.encode('utf-8')),
+                mimetype='text/plain'
+            ),
+            fields='id, webViewLink'
         ).execute()
         
-        return file.get("id")
+        return {
+            "file_id": file.get("id"),
+            "filename": filename,
+            "folder": project_name,
+            "link": file.get("webViewLink"),
+            "created_at": datetime.now().isoformat()
+        }
+    
     except Exception as e:
-        print(f"Error creating file {title}: {str(e)}")
-        raise
+        raise RuntimeError(f"Save failed: {str(e)}")
 
+# ========================================
+# ISABELLA STORY ENDPOINTS
+# ========================================
 
-def read_file_from_drive(file_id: str):
-    """Read content from a file in Google Drive"""
+@app.post("/story/create")
+async def create_story(request: StoryPrompt):
+    """
+    Isabella writes a new story from a single prompt.
+    Automatically saves to Google Drive.
+    Returns: chapter content + Google Drive link
+    """
     if not drive:
-        raise RuntimeError("Google Drive service not initialized")
+        return JSONResponse(status_code=500, content={"error": "Google Drive not initialized"})
     
     try:
-        request = drive.files().get_media(fileId=file_id)
-        file_content = BytesIO()
-        downloader = MediaIoBaseDownload(file_content, request)
-        
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        
-        return file_content.getvalue().decode("utf-8")
-    except Exception as e:
-        print(f"Error reading file {file_id}: {str(e)}")
-        raise
+        # Build writing prompt
+        writing_prompt = f"""
+STORY PROMPT: {request.prompt}
 
+REQUIREMENTS:
+- Write the opening chapter/scene of this story
+- Length: {request.length} (aim for {'3000-4000 words' if request.length == 'chapter' else '1000-2000 words' if request.length == 'short' else '5000-8000 words'})
+- Genre: {request.genre if request.genre != 'auto' else 'Determine the best genre for this story'}
+- Quality: Publishable, professional prose
+- Opening: Strong hook that draws reader in immediately
+- End: Scene closure with momentum toward next beat
 
-def append_file(file_id: str, content: str):
-    """Append content to an existing file"""
-    if not drive:
-        raise RuntimeError("Google Drive service not initialized")
-    
-    try:
-        existing = read_file_from_drive(file_id)
-        updated = existing + "\n\n" + content
-
-        # Convert string content to file-like object
-        content_bytes = updated.encode('utf-8')
-        media = MediaIoBaseUpload(
-            BytesIO(content_bytes),
-            mimetype='text/plain',
-            resumable=True
-        )
-
-        drive.files().update(
-            fileId=file_id,
-            media_body=media
-        ).execute()
-    except Exception as e:
-        print(f"Error appending to file {file_id}: {str(e)}")
-        raise
-
-
-def simple_summarize(text: str, max_length: int = 300) -> str:
-    """
-    Simple extractive summarization (no API key needed)
-    Extracts key sentences based on word frequency
-    """
-    try:
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+WRITE THE COMPLETE OPENING CHAPTER NOW:
+"""
         
-        if len(sentences) <= 3:
-            return text  # Too short, return as-is
+        # Generate story
+        story_content = await call_writer_model_async(writing_prompt, request.model)
         
-        # Calculate sentence scores based on word frequency
-        words = re.findall(r'\b\w+\b', text.lower())
-        word_freq = {}
-        for word in words:
-            if len(word) > 3:  # Skip short words
-                word_freq[word] = word_freq.get(word, 0) + 1
-        
-        sentence_scores = {}
-        for i, sentence in enumerate(sentences):
-            words_in_sentence = re.findall(r'\b\w+\b', sentence.lower())
-            score = sum(word_freq.get(word, 0) for word in words_in_sentence)
-            sentence_scores[i] = score
-        
-        # Get top sentences (maintain order)
-        top_sentences = sorted(
-            [(i, s) for i, s in sentence_scores.items()],
-            key=lambda x: x[1],
-            reverse=True
-        )[:3]
-        
-        # Sort by original order
-        top_indices = sorted([idx for idx, _ in top_sentences])
-        summary = " ".join([sentences[i] for i in top_indices])
-        
-        # Trim to max_length
-        if len(summary) > max_length:
-            summary = summary[:max_length].rsplit(' ', 1)[0] + "..."
-        
-        return summary.strip()
-    except Exception as e:
-        print(f"Error summarizing: {str(e)}")
-        return text[:max_length] + "..." if len(text) > max_length else text
-
-
-def openrouter_summarize(text: str, model: str = "claude-3-5-sonnet", max_length: int = 300) -> str:
-    """
-    Use OpenRouter to summarize text with AI models
-    Models available: claude-3-5-sonnet, claude-3-opus, gpt-4o, gpt-4-turbo, llama-2, mistral
-    """
-    if not OPENROUTER_API_KEY:
-        print("OpenRouter API key not configured, falling back to simple summarization")
-        return simple_summarize(text, max_length)
-    
-    try:
-        model_id = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["claude-3-5-sonnet"])
-        
-        prompt = f"""Summarize the following text in approximately {max_length} characters. 
-Be concise and capture the main points.
-
-TEXT:
-{text}
-
-SUMMARY:"""
-        
-        response = requests.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "HTTP-Referer": "https://railway.app",
-                "X-Title": "FastAPI GPT Writer"
-            },
-            json={
-                "model": model_id,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 500,
-                "temperature": 0.7
-            }
+        # Save to Drive
+        chapter_title = request.prompt[:50].replace(" ", "_")
+        drive_info = save_chapter_to_drive(
+            request.project_name,
+            chapter_title,
+            story_content,
+            chapter_num=1
         )
         
-        if response.status_code == 200:
-            result = response.json()
-            summary = result["choices"][0]["message"]["content"].strip()
-            return summary[:max_length] + "..." if len(summary) > max_length else summary
-        else:
-            print(f"OpenRouter error: {response.status_code} - {response.text}")
-            return simple_summarize(text, max_length)
+        return {
+            "status": "success",
+            "message": "Story chapter created and saved to Google Drive",
+            "chapter": 1,
+            "word_count": len(story_content.split()),
+            "project": request.project_name,
+            "drive_link": drive_info["link"],
+            "file_id": drive_info["file_id"],
+            "preview": story_content[:500] + "..."
+        }
     
     except Exception as e:
-        print(f"Error with OpenRouter summarization: {str(e)}")
-        return simple_summarize(text, max_length)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.post("/story/continue")
+async def continue_story(request: ContinueStory):
+    """
+    Isabella continues an existing story.
+    Analyzes previous chapter and escalates naturally.
+    Saves next chapter to Google Drive.
+    """
+    if not drive:
+        return JSONResponse(status_code=500, content={"error": "Google Drive not initialized"})
+    
+    try:
+        continuation_prompt = f"""
+STORY CONTEXT: {request.context}
 
-# ======================================================
-# ENDPOINTS
-# ======================================================
+WRITE THE NEXT CHAPTER:
+- Continue from the emotional and narrative momentum established
+- Escalate stakes, complexity, and character revelation
+- Maintain established voice and thematic consistency
+- Target length: 3000-4000 words
+- Open strong, close with cliffhanger or emotional beat
+- NO summaries, NO recaps—reader already knows what happened
+
+WRITE CHAPTER NOW:
+"""
+        
+        # Generate continuation
+        next_chapter = await call_writer_model_async(continuation_prompt, request.model)
+        
+        # Save to Drive
+        drive_info = save_chapter_to_drive(
+            request.project_name,
+            "continuation",
+            next_chapter,
+            chapter_num=None
+        )
+        
+        return {
+            "status": "success",
+            "message": "Story continued and saved to Google Drive",
+            "word_count": len(next_chapter.split()),
+            "project": request.project_name,
+            "drive_link": drive_info["link"],
+            "preview": next_chapter[:500] + "..."
+        }
+    
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/story/revise")
+async def revise_chapter(request: ReviseChapter):
+    """
+    Isabella rewrites a chapter based on feedback.
+    Fixes structural issues, not just surface changes.
+    """
+    if not drive:
+        return JSONResponse(status_code=500, content={"error": "Google Drive not initialized"})
+    
+    try:
+        revision_prompt = f"""
+CHAPTER TO REVISE: Chapter {request.chapter_num}
+
+REVISION NOTES: {request.feedback}
+
+INSTRUCTIONS:
+- Identify the root cause of the feedback (not just surface symptoms)
+- Rewrite the entire chapter with the correction integrated
+- Maintain character consistency and plot continuity
+- Keep any elements that work; transform what doesn't
+- Preserve the chapter's emotional arc
+- Length: original length (3000-4000 words)
+
+WRITE THE REVISED CHAPTER NOW:
+"""
+        
+        # Generate revision
+        revised_chapter = await call_writer_model_async(revision_prompt, request.model)
+        
+        # Save revised version
+        drive_info = save_chapter_to_drive(
+            request.project_name,
+            f"Chapter_{request.chapter_num}_REVISED",
+            revised_chapter,
+            chapter_num=request.chapter_num
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Chapter {request.chapter_num} revised and saved",
+            "project": request.project_name,
+            "drive_link": drive_info["link"],
+            "preview": revised_chapter[:500] + "..."
+        }
+    
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ========================================
+# UTILITY ENDPOINTS
+# ========================================
+
+@app.get("/story/models")
+async def available_models():
+    """List available writing models and their characteristics"""
+    return {
+        "primary": {
+            "claude-3-5-sonnet": "Best for narrative sophistication and character work",
+            "gpt-4o": "Best for dialogue precision and world-building",
+        },
+        "alternative": {
+            "claude-3-opus": "Deep thematic exploration, complex plots",
+            "llama-2": "Creative range, experimental voices"
+        }
+    }
+
+@app.get("/story/status")
+async def status():
+    """Check system status and API connections"""
+    return {
+        "service": "Isabella Master Storyteller",
+        "version": "5.0.0",
+        "status": "online",
+        "google_drive": "connected" if drive else "disconnected",
+        "openrouter": "configured" if OPENROUTER_API_KEY else "missing",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# ========================================
+# HELPER ASYNC WRAPPER
+# ========================================
+
+async def call_writer_model_async(prompt: str, model: str) -> str:
+    """Async wrapper for writer model call"""
+    return call_writer_model(prompt, model)
+
+# ========================================
+# ROOT ENDPOINT
+# ========================================
 
 @app.get("/")
-def health_check():
+async def root():
+    """Isabella API - Master Storyteller"""
     return {
-        "status": "ok" if drive else "error",
-        "message": "API is running" if drive else "Google Drive not initialized",
-        "google_drive_ready": bool(drive),
-        "openrouter_configured": bool(OPENROUTER_API_KEY),
-        "env_vars": {
-            "GOOGLE_OAUTH_TOKEN_JSON": "✓ SET" if os.environ.get("GOOGLE_OAUTH_TOKEN_JSON") else "✗ NOT SET",
-            "OPENROUTER_API_KEY": "✓ SET" if OPENROUTER_API_KEY else "✗ NOT SET"
-        }
-    }
-
-
-@app.get("/list")
-def list_files(path: str = "default"):
-    """List files in a project folder"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        # Get the folder ID for the path
-        project_folder_id = get_or_create_folder(path)
-        
-        res = drive.files().list(
-            q=f"'{project_folder_id}' in parents and trashed=false",
-            fields="files(name, mimeType)",
-            spaces="drive"
-        ).execute()
-
-        files = res.get("files", [])
-        
-        # Separate folders and files
-        folders = [f["name"] for f in files if f["mimeType"] == "application/vnd.google-apps.folder"]
-        text_files = [f["name"] for f in files if f["name"].endswith(".txt")]
-
-        return {
-            "status": "success",
-            "path": path,
-            "folders": folders,
-            "files": text_files,
-            "total": len(text_files)
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list files: {str(e)}"
-        }
-
-
-@app.get("/list-all")
-def list_all_drive_contents():
-    """List ALL folders at root level (ISA_BRAIN)"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        res = drive.files().list(
-            q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
-            fields="files(id, name, mimeType, modifiedTime, size)",
-            spaces="drive",
-            pageSize=100
-        ).execute()
-
-        files = res.get("files", [])
-        
-        # Separate folders and files
-        folders = []
-        text_files = []
-        
-        for f in files:
-            if f["mimeType"] == "application/vnd.google-apps.folder":
-                folders.append({
-                    "name": f["name"],
-                    "type": "folder",
-                    "modified": f.get("modifiedTime", "N/A")
-                })
-            else:
-                folders.append({
-                    "name": f["name"],
-                    "type": "file",
-                    "size_bytes": f.get("size", 0),
-                    "modified": f.get("modifiedTime", "N/A")
-                })
-
-        return {
-            "status": "success",
-            "root_folder": "ISA_BRAIN",
-            "total_items": len(files),
-            "folders_count": len([f for f in files if f["mimeType"] == "application/vnd.google-apps.folder"]),
-            "items": folders
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list drive: {str(e)}"
-        }
-
-
-@app.get("/list-recursive")
-def list_recursive(path: str = "default", max_depth: int = 5):
-    """List all files and folders recursively (tree structure)"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    def build_tree(folder_id: str, depth: int = 0) -> dict:
-        if depth > max_depth:
-            return {"error": "Max depth reached"}
-        
-        try:
-            res = drive.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id, name, mimeType, size, modifiedTime)",
-                spaces="drive",
-                pageSize=50
-            ).execute()
-            
-            items = res.get("files", [])
-            result = {
-                "folders": [],
-                "files": []
-            }
-            
-            for item in items:
-                if item["mimeType"] == "application/vnd.google-apps.folder":
-                    result["folders"].append({
-                        "name": item["name"],
-                        "id": item["id"],
-                        "modified": item.get("modifiedTime"),
-                        "children": build_tree(item["id"], depth + 1)
-                    })
-                else:
-                    result["files"].append({
-                        "name": item["name"],
-                        "size_bytes": item.get("size", 0),
-                        "modified": item.get("modifiedTime")
-                    })
-            
-            return result
-        except Exception as e:
-            return {"error": str(e)}
-    
-    try:
-        project_folder_id = get_or_create_folder(path)
-        tree = build_tree(project_folder_id)
-        
-        return {
-            "status": "success",
-            "path": path,
-            "tree": tree,
-            "max_depth": max_depth
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list recursively: {str(e)}"
-        }
-
-
-@app.get("/search")
-def search_drive(query: str, search_in: str = "all"):
-    """Search for files across entire drive"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        # Build query
-        if search_in == "all":
-            q = f"name contains '{query}' and trashed=false"
-        elif search_in == "folders":
-            q = f"name contains '{query}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        elif search_in == "files":
-            q = f"name contains '{query}' and mimeType!='application/vnd.google-apps.folder' and trashed=false"
-        else:
-            q = f"name contains '{query}' and trashed=false"
-        
-        res = drive.files().list(
-            q=q,
-            fields="files(id, name, mimeType, parents, modifiedTime, size)",
-            spaces="drive",
-            pageSize=100
-        ).execute()
-
-        results = []
-        for item in res.get("files", []):
-            results.append({
-                "name": item["name"],
-                "type": "folder" if item["mimeType"] == "application/vnd.google-apps.folder" else "file",
-                "size_bytes": item.get("size", 0),
-                "modified": item.get("modifiedTime"),
-                "id": item["id"]
-            })
-        
-        return {
-            "status": "success",
-            "query": query,
-            "search_in": search_in,
-            "results_count": len(results),
-            "results": results
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Search failed: {str(e)}"
-        }
-
-
-@app.get("/list-detailed")
-def list_detailed(path: str = "default"):
-    """List files with detailed information (size, dates, etc)"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        project_folder_id = get_or_create_folder(path)
-        
-        res = drive.files().list(
-            q=f"'{project_folder_id}' in parents and trashed=false",
-            fields="files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink)",
-            spaces="drive",
-            pageSize=100
-        ).execute()
-
-        files = res.get("files", [])
-        
-        detailed_items = []
-        for f in files:
-            detailed_items.append({
-                "name": f["name"],
-                "type": "folder" if f["mimeType"] == "application/vnd.google-apps.folder" else "file",
-                "size_bytes": int(f.get("size", 0)),
-                "size_kb": round(int(f.get("size", 0)) / 1024, 2),
-                "created": f.get("createdTime"),
-                "modified": f.get("modifiedTime"),
-                "url": f.get("webViewLink"),
-                "id": f["id"]
-            })
-        
-        return {
-            "status": "success",
-            "path": path,
-            "total_items": len(detailed_items),
-            "items": detailed_items
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list detailed: {str(e)}"
-        }
-
-
-@app.post("/write")
-def write_text(req: WriteRequest):
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        if find_file(req.title, req.project):
-            return {
-                "status": "error",
-                "message": f"File already exists in project '{req.project}'. Use /append."
-            }
-
-        file_id = create_file(req.title, req.content, req.project)
-
-        return {
-            "status": "success",
-            "message": f"File created in project '{req.project}' (ID: {file_id})"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to create file: {str(e)}"
-        }
-
-
-@app.get("/read")
-def read_text(title: str, project: str = "default"):
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        file = find_file(title, project)
-        
-        if not file:
-            return {
-                "status": "error",
-                "message": f"File '{title}.txt' not found in project '{project}'"
-            }
-
-        content = read_file_from_drive(file["id"])
-        
-        return {
-            "status": "success",
-            "content": content,
-            "project": project
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to read file: {str(e)}"
-        }
-
-
-@app.post("/append")
-def append_text(req: WriteRequest):
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        file = find_file(req.title, req.project)
-
-        if not file:
-            return {
-                "status": "error",
-                "message": f"File not found in project '{req.project}'. Use /write first."
-            }
-
-        append_file(file["id"], req.content)
-
-        return {
-            "status": "success",
-            "message": f"Content appended in project '{req.project}'."
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to append to file: {str(e)}"
-        }
-
-
-@app.post("/summarize")
-def summarize_file(req: SummarizeRequest):
-    """Read and summarize an existing file using OpenRouter AI or simple extraction"""
-    if not drive:
-        return {
-            "status": "error",
-            "message": "Google Drive service not initialized"
-        }
-    
-    try:
-        file = find_file(req.title, req.project)
-        
-        if not file:
-            return {
-                "status": "error",
-                "message": f"File '{req.title}' not found in project '{req.project}'"
-            }
-        
-        content = read_file_from_drive(file["id"])
-        
-        # Use OpenRouter if available, otherwise fall back to simple summarization
-        if req.model and OPENROUTER_API_KEY:
-            summary = openrouter_summarize(content, req.model, req.max_length)
-            method = "OpenRouter AI"
-        else:
-            summary = simple_summarize(content, req.max_length)
-            method = "Extractive"
-        
-        return {
-            "status": "success",
-            "title": req.title,
-            "content_length": len(content),
-            "summary": summary,
-            "method": method,
-            "model": req.model if OPENROUTER_API_KEY else "N/A",
-            "project": req.project
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to summarize file: {str(e)}"
-        }
-
-
-@app.get("/models")
-def list_available_models():
-    """List all available AI models from OpenRouter"""
-    return {
-        "status": "success",
-        "models_available": list(AVAILABLE_MODELS.keys()),
-        "openrouter_configured": bool(OPENROUTER_API_KEY),
-        "model_details": {
-            "claude-3-5-sonnet": "Latest Claude 3.5 Sonnet - Best for summarization",
-            "claude-3-opus": "Claude 3 Opus - More powerful reasoning",
-            "gpt-4o": "OpenAI GPT-4o - Multimodal capabilities",
-            "gpt-4-turbo": "GPT-4 Turbo - Fast processing",
-            "llama-2": "Meta Llama 2 - Open-source, cost-effective",
-            "mistral": "Mistral 7B - Fast and efficient"
-        }
-    }
-
-
-@app.get("/diagnose")
-def diagnose_system():
-    """Diagnose API and Google Drive connection status"""
-    diagnostics = {
-        "api_status": "✓ OK" if drive else "✗ ERROR",
-        "google_drive_initialized": bool(drive),
-        "environment_variables": {
-            "GOOGLE_OAUTH_TOKEN_JSON_set": bool(os.environ.get("GOOGLE_OAUTH_TOKEN_JSON")),
-            "OPENROUTER_API_KEY_set": bool(OPENROUTER_API_KEY)
+        "service": "Isabella - Master Storyteller GPT",
+        "version": "5.0.0",
+        "status": "online",
+        "endpoints": {
+            "POST /story/create": "Generate a new story from prompt",
+            "POST /story/continue": "Continue an existing story",
+            "POST /story/revise": "Revise a specific chapter",
+            "GET /story/models": "List available writing models",
+            "GET /story/status": "System status"
         },
-        "drive_folder_id": DRIVE_FOLDER_ID,
-        "recommendations": []
+        "google_drive_integration": "Automatic story saving enabled",
+        "openrouter_models": list(WRITING_MODELS.keys())
     }
-    
-    # Check what's wrong
-    if not drive:
-        diagnostics["recommendations"].append(
-            "⚠️  Google Drive NOT initialized. Set GOOGLE_OAUTH_TOKEN_JSON on Railway."
-        )
-    else:
-        diagnostics["recommendations"].append("✓ Google Drive is properly connected")
-        
-    if not OPENROUTER_API_KEY:
-        diagnostics["recommendations"].append(
-            "⚠️  OpenRouter not configured. Set OPENROUTER_API_KEY for AI features."
-        )
-    else:
-        diagnostics["recommendations"].append("✓ OpenRouter API is configured")
-    
-    # Try to actually list the ISA_BRAIN folder
-    if drive:
-        try:
-            about = drive.about().get(fields='storageQuota').execute()
-            diagnostics["storage_quota"] = {
-                "limit_gb": about.get('storageQuota', {}).get('limit', 0) / (1024**3),
-                "usage_gb": about.get('storageQuota', {}).get('usage', 0) / (1024**3)
-            }
-            
-            # List files in ISA_BRAIN
-            res = drive.files().list(
-                q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
-                fields="files(name, mimeType, id, createdTime)",
-                pageSize=10
-            ).execute()
-            
-            files = res.get("files", [])
-            diagnostics["drive_folder_contents"] = {
-                "folder_id": DRIVE_FOLDER_ID,
-                "files_count": len(files),
-                "files": [{"name": f["name"], "type": f["mimeType"]} for f in files[:5]]
-            }
-        except Exception as e:
-            diagnostics["drive_error"] = str(e)
-            diagnostics["recommendations"].append(f"Google Drive error: {str(e)}")
-    
-    return diagnostics
 
+# ========================================
+# RUN
+# ========================================
 
-
-
-# Book and Series endpoints removed - focusing on Google Drive management only
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
