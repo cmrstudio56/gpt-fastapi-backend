@@ -543,7 +543,7 @@ async def call_writer_model_async(prompt: str, model: str) -> str:
     """Async wrapper for writer model call - runs in thread pool to avoid blocking"""
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
-    return await loop.run_in_executor(executor, call_writer_model, prompt, model)
+    return await loop.run_in_executor(executor, lambda: call_writer_model(prompt, model))
 
 # ========================================
 # ROOT ENDPOINT
