@@ -12,7 +12,8 @@ __pycache__/
 .pytest_cache/
 client_secret.json
 token.json
-*.txt
+openai\ api\ key.txt
+openrouter_key.txt
 *.key
 *.pem
 .idea/
