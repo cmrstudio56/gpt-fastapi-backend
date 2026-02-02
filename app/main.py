@@ -6,6 +6,7 @@ Version 5.0 - Elite Writer Architecture
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import json
@@ -118,6 +119,18 @@ app = FastAPI(
         "url": "https://web-production-99e37.up.railway.app",
         "description": "Production server"
     }]
+)
+
+# ========================================
+# CORS CONFIGURATION
+# ========================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins (or specify specific domains)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
 )
 
 # ========================================
