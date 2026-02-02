@@ -57,38 +57,34 @@ def get_drive_service():
     """Initialize Google Drive service with OAuth"""
     creds = None
     
-    # Railway production
+    # Railway production - env variable
     if os.environ.get("GOOGLE_OAUTH_TOKEN_JSON"):
         try:
             creds = Credentials.from_authorized_user_info(
                 json.loads(os.environ["GOOGLE_OAUTH_TOKEN_JSON"]),
                 SCOPES
             )
+            print("✓ Google Drive: Using GOOGLE_OAUTH_TOKEN_JSON from environment")
         except Exception as e:
-            raise RuntimeError(f"Failed to load credentials from env: {str(e)}")
+            print(f"WARNING: Failed to load credentials from env: {str(e)}")
+            creds = None
     
-    # Local development
-    elif os.path.exists("token.json"):
+    # Local development - token.json file
+    if not creds and os.path.exists("token.json"):
         try:
             creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+            print("✓ Google Drive: Using token.json file")
         except Exception as e:
-            raise RuntimeError(f"Failed to load token.json: {str(e)}")
+            print(f"WARNING: Failed to load token.json: {str(e)}")
+            creds = None
     
-    # First-time OAuth
+    # If still no creds, continue anyway (API will degrade gracefully)
+    if creds:
+        return build("drive", "v3", credentials=creds)
     else:
-        try:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "client_secret.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as f:
-                f.write(creds.to_json())
-        except FileNotFoundError:
-            raise RuntimeError("client_secret.json not found")
-        except Exception as e:
-            raise RuntimeError(f"OAuth flow failed: {str(e)}")
-    
-    return build("drive", "v3", credentials=creds)
+        print("⚠ Google Drive will not be available (no credentials)")
+        return None
+
 
 try:
     drive = get_drive_service()
