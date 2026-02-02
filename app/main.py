@@ -33,7 +33,7 @@ DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"  # ISA_BRAIN root
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 if not OPENROUTER_API_KEY:
     try:
-        with open("fastapi openrouter .txt", "r") as f:
+        with open("openrouter_key.txt", "r") as f:
             OPENROUTER_API_KEY = f.read().strip()
     except:
         pass
