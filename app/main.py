@@ -29,7 +29,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"  # ISA_BRAIN root
 
-# OpenAI Configuration
+# API Configuration - Support both OpenAI and OpenRouter
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 if not OPENAI_API_KEY:
     try:
@@ -38,7 +38,23 @@ if not OPENAI_API_KEY:
     except:
         pass
 
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+if not OPENROUTER_API_KEY:
+    try:
+        with open("openrouter_key.txt", "r") as f:
+            OPENROUTER_API_KEY = f.read().strip()
+    except:
+        pass
+
 OPENAI_BASE_URL = "https://api.openai.com/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Determine which provider to use (priority: env var > OPENAI > OPENROUTER)
+API_PROVIDER = os.environ.get("API_PROVIDER", "openai").lower()
+if API_PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
+    API_PROVIDER = "openai"
+if API_PROVIDER == "openai" and not OPENAI_API_KEY:
+    API_PROVIDER = "openrouter"
 
 # Primary writing models (in priority order)
 WRITING_MODELS = {
@@ -136,12 +152,23 @@ class ReviseChapter(BaseModel):
 
 def call_writer_model(prompt: str, model: str = "gpt-4o", system_instruction: str = None) -> str:
     """
-    Call OpenAI API with Isabella system instruction
+    Call AI API (OpenAI or OpenRouter) with Isabella system instruction
     Returns generated story text
+    Automatically selects based on API_PROVIDER and available keys
     """
     
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY not configured")
+    provider = API_PROVIDER
+    
+    # If OpenAI is preferred but not available, use OpenRouter
+    if provider == "openai" and not OPENAI_API_KEY:
+        provider = "openrouter"
+    if provider == "openrouter" and not OPENROUTER_API_KEY:
+        provider = "openai"
+    
+    if provider == "openai" and not OPENAI_API_KEY:
+        raise RuntimeError("No API keys configured (OPENAI_API_KEY or OPENROUTER_API_KEY required)")
+    if provider == "openrouter" and not OPENROUTER_API_KEY:
+        raise RuntimeError("No API keys configured (OPENAI_API_KEY or OPENROUTER_API_KEY required)")
     
     model_key = WRITING_MODELS.get(model, WRITING_MODELS["gpt-4o"])
     
@@ -167,13 +194,20 @@ YOUR RESPONSIBILITY:
 
 WRITE NOW. No explanations. No outlines. Only complete scenes."""
     
+    if provider == "openai":
+        return _call_openai(model_key, system, prompt)
+    else:
+        return _call_openrouter(model_key, system, prompt)
+
+def _call_openai(model: str, system: str, prompt: str) -> str:
+    """Call OpenAI API"""
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json"
     }
     
     payload = {
-        "model": model_key,
+        "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt}
@@ -200,6 +234,44 @@ WRITE NOW. No explanations. No outlines. Only complete scenes."""
     
     except Exception as e:
         raise RuntimeError(f"OpenAI API error: {str(e)}")
+
+def _call_openrouter(model: str, system: str, prompt: str) -> str:
+    """Call OpenRouter API"""
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/cmrstudio56/gpt-fastapi-backend",
+        "X-Title": "Isabella Story Generator"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.9,
+        "max_tokens": 8000,
+        "top_p": 0.95,
+    }
+    
+    try:
+        response = requests.post(
+            f"{OPENROUTER_BASE_URL}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            return result["choices"][0]["message"]["content"]
+        else:
+            raise RuntimeError("Invalid OpenRouter response")
+    
+    except Exception as e:
+        raise RuntimeError(f"OpenRouter API error: {str(e)}")
 
 def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
     """Get or create a folder in Google Drive"""
@@ -444,7 +516,9 @@ async def status():
         "version": "5.0.0",
         "status": "online",
         "google_drive": "connected" if drive else "disconnected",
+        "api_provider": API_PROVIDER,
         "openai": "configured" if OPENAI_API_KEY else "missing",
+        "openrouter": "configured" if OPENROUTER_API_KEY else "missing",
         "timestamp": datetime.now().isoformat()
     }
 
