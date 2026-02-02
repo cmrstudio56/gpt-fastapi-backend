@@ -60,50 +60,42 @@ POST /write {title: "summary", content: "..."}
 
 ---
 
-## Skill 2: Story Writer 📝 PLANNED
+## Skill 2: Story Writer ✅ ACTIVE
 
-**Status:** Design Phase  
-**Version:** 1.0.0 (Planned)  
-**Technology:** LLM-based via Custom GPT or OpenRouter
+**Status:** Production Ready (v5.0.0)
+**Version:** 5.0.0
+**Technology:** LLM-based via OpenRouter (Claude, GPT-4o)
 
-### Planned Capabilities
-- Character development and profiling
-- Scene writing and generation
-- Chapter outlining
-- Dialogue writing
-- Plot brainstorming
-- Writing style refinement
-- Story feedback and critique
-- Genre-specific templates
+### Capabilities
+- Generate stories from prompts (`/story/create`)
+- Continue existing stories (`/story/continue`)
+- Revise chapters based on feedback (`/story/revise`)
+- Auto-save to Google Drive
+- Creative writing with professional narrative structure
 
 ### Integration Points
-- **With Google Drive Manager:** Save drafts and research
-- **With Tutor:** Research topics for story context
-- **Data Storage:** Google Drive
+- **With Google Drive Manager:** Automatically creates project folders and saves chapters
+- **Data Storage:** Google Drive (Isabella_Stories folder)
 
 ### Skill Inputs
-- Story premise/concept
-- Character descriptions
-- Plot outline
-- Writing preferences
-- Target audience
-- Genre conventions
+- Story prompt
+- Genre
+- Length preference
+- Creative inputs via API
 
 ### Skill Outputs
-- Written scenes/chapters
-- Character profiles
-- Story outlines
-- Writing suggestions
-- Feedback on drafts
+- Written narrative text
+- Saved files in Google Drive
+- JSON response with story metadata
 
 ### Example Request
 ```
-User: "Write a dramatic scene where Sarah discovers a secret"
-Story Writer:
-  - Considers character context
-  - Generates emotional scene
-  - Returns with dialogue and narrative
-  - Saves to Google Drive
+POST /story/create
+{
+  "prompt": "A cybernetic detective solves crimes in Neo-Tokyo",
+  "genre": "sci-fi",
+  "model": "claude-3-5-sonnet"
+}
 ```
 
 ---

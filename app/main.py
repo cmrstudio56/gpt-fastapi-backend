@@ -13,6 +13,8 @@ import requests
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Google Drive & Auth
 from googleapiclient.discovery import build
@@ -29,6 +31,13 @@ DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"  # ISA_BRAIN root
 
 # OpenRouter Configuration
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+if not OPENROUTER_API_KEY:
+    try:
+        with open("fastapi openrouter .txt", "r") as f:
+            OPENROUTER_API_KEY = f.read().strip()
+    except:
+        pass
+
 OPENROUTER_BASE_URL = "https://openrouter.io/api/v1"
 
 # Primary writing models (in priority order)
@@ -36,6 +45,7 @@ WRITING_MODELS = {
     "claude-3-5-sonnet": "anthropic/claude-3.5-sonnet",      # Best for narrative
     "gpt-4o": "openai/gpt-4o",                               # Best for dialogue
     "claude-3-opus": "anthropic/claude-3-opus",              # Alternative narrative
+    "claude-3.5-opus": "anthropic/claude-3.5-opus",          # User requested "Opus 4.5" capability
     "llama-2": "meta-llama/llama-2-70b-chat"                 # Experimental/diverse
 }
 
@@ -451,8 +461,10 @@ async def status():
 # ========================================
 
 async def call_writer_model_async(prompt: str, model: str) -> str:
-    """Async wrapper for writer model call"""
-    return call_writer_model(prompt, model)
+    """Async wrapper for writer model call - runs in thread pool to avoid blocking"""
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    return await loop.run_in_executor(executor, call_writer_model, prompt, model)
 
 # ========================================
 # ROOT ENDPOINT
