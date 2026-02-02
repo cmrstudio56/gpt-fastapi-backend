@@ -29,24 +29,22 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 DRIVE_FOLDER_ID = "1UNIpr8fEWbGccnyAAu01kwXa6xwPdkFk"  # ISA_BRAIN root
 
-# OpenRouter Configuration
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
-if not OPENROUTER_API_KEY:
+# OpenAI Configuration
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+if not OPENAI_API_KEY:
     try:
-        with open("openrouter_key.txt", "r") as f:
-            OPENROUTER_API_KEY = f.read().strip()
+        with open("openai api key.txt", "r") as f:
+            OPENAI_API_KEY = f.read().strip()
     except:
         pass
 
-OPENROUTER_BASE_URL = "https://openrouter.io/api/v1"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 # Primary writing models (in priority order)
 WRITING_MODELS = {
-    "claude-3-5-sonnet": "anthropic/claude-3.5-sonnet",      # Best for narrative
-    "gpt-4o": "openai/gpt-4o",                               # Best for dialogue
-    "claude-3-opus": "anthropic/claude-3-opus",              # Alternative narrative
-    "claude-3.5-opus": "anthropic/claude-3.5-opus",          # User requested "Opus 4.5" capability
-    "llama-2": "meta-llama/llama-2-70b-chat"                 # Experimental/diverse
+    "gpt-4o": "gpt-4o",                                       # Best for narrative & dialogue
+    "gpt-4-turbo": "gpt-4-turbo-preview",                     # Alternative narrative
+    "gpt-3-5-turbo": "gpt-3.5-turbo",                         # Fast, cost-effective
 }
 
 # ========================================
@@ -115,7 +113,7 @@ class StoryPrompt(BaseModel):
     genre: str = "auto"  # auto-detect or specify (literary, scifi, thriller, etc.)
     length: str = "chapter"  # chapter (3-4k), short (1-2k), long (5-8k)
     project_name: str = "Isabella_Stories"
-    model: str = "claude-3-5-sonnet"
+    model: str = "gpt-4o"
 
 class StoryTitle(BaseModel):
     project_name: str
@@ -124,28 +122,28 @@ class StoryTitle(BaseModel):
 class ContinueStory(BaseModel):
     project_name: str
     context: str  # Brief recap of where story left off
-    model: str = "claude-3-5-sonnet"
+    model: str = "gpt-4o"
 
 class ReviseChapter(BaseModel):
     project_name: str
     chapter_num: int
     feedback: str  # What needs to change (tone, pacing, etc.)
-    model: str = "claude-3-5-sonnet"
+    model: str = "gpt-4o"
 
 # ========================================
-# OPENROUTER INTEGRATION
+# OPENAI INTEGRATION
 # ========================================
 
-def call_writer_model(prompt: str, model: str = "claude-3-5-sonnet", system_instruction: str = None) -> str:
+def call_writer_model(prompt: str, model: str = "gpt-4o", system_instruction: str = None) -> str:
     """
-    Call OpenRouter API with Isabella system instruction
+    Call OpenAI API with Isabella system instruction
     Returns generated story text
     """
     
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY not configured")
     
-    model_key = WRITING_MODELS.get(model, WRITING_MODELS["claude-3-5-sonnet"])
+    model_key = WRITING_MODELS.get(model, WRITING_MODELS["gpt-4o"])
     
     # Isabella master system instruction
     system = system_instruction or """You are Isabella, a master storyteller and professional author with 20+ years of published experience across fiction, screenwriting, and long-form narrative.
@@ -170,10 +168,8 @@ YOUR RESPONSIBILITY:
 WRITE NOW. No explanations. No outlines. Only complete scenes."""
     
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://isabella.ai",
-        "X-Title": "Isabella Story Generator"
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
     }
     
     payload = {
@@ -189,7 +185,7 @@ WRITE NOW. No explanations. No outlines. Only complete scenes."""
     
     try:
         response = requests.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
+            f"{OPENAI_BASE_URL}/chat/completions",
             headers=headers,
             json=payload,
             timeout=120
@@ -200,10 +196,10 @@ WRITE NOW. No explanations. No outlines. Only complete scenes."""
         if "choices" in result and len(result["choices"]) > 0:
             return result["choices"][0]["message"]["content"]
         else:
-            raise RuntimeError("Invalid OpenRouter response")
+            raise RuntimeError("Invalid OpenAI response")
     
     except Exception as e:
-        raise RuntimeError(f"OpenRouter API error: {str(e)}")
+        raise RuntimeError(f"OpenAI API error: {str(e)}")
 
 def get_or_create_folder(folder_name: str, parent_id: str = DRIVE_FOLDER_ID) -> str:
     """Get or create a folder in Google Drive"""
@@ -448,7 +444,7 @@ async def status():
         "version": "5.0.0",
         "status": "online",
         "google_drive": "connected" if drive else "disconnected",
-        "openrouter": "configured" if OPENROUTER_API_KEY else "missing",
+        "openai": "configured" if OPENAI_API_KEY else "missing",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -481,7 +477,7 @@ async def root():
             "GET /story/status": "System status"
         },
         "google_drive_integration": "Automatic story saving enabled",
-        "openrouter_models": list(WRITING_MODELS.keys())
+        "openai_models": list(WRITING_MODELS.keys())
     }
 
 # ========================================
